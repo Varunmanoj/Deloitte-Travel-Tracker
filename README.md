@@ -22,7 +22,7 @@ The primary goal of this project is to provide a user-friendly tool for employee
 - Tailored for the **Deloitte USI Local Transport Reimbursement** program.
 - Specifically allows tracking against the **₹6500 monthly allowance** provided for eligible persons with disabilities and women employees.
 
-### Accessibility (a11y)
+### Accessibility
 - **Screen Reader Support**: The application is designed to be fully accessible for PwD (People with Disabilities) using screen readers.
 - **Keyboard Navigation**: The application is designed to be fully accessible for PwD (People with Disabilities) using screen readers.
 
