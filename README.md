@@ -49,16 +49,16 @@ The application operates completely client-side for data persistence while lever
 ## Run Locally
 
 **Prerequisites:** Node.js
-
-1. Install dependencies:
+1. Download the repository and extract the zip file.
+2. Install dependencies:
    ```bash
    npm install
    ```
 
-2. Set up environment variables:
+3. Set up environment variables:
    - Add your `GEMINI_API_KEY` in [.env.local](.env.local).
 
-3. Run the app:
+4. Run the app:
    ```bash
    npm run dev
    ```
