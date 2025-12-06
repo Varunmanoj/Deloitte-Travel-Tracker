@@ -24,6 +24,11 @@ The primary goal of this project is to provide a user-friendly tool for employee
 
 ### Accessibility (a11y)
 - **Screen Reader Support**: The application is designed to be fully accessible for PwD (People with Disabilities) using screen readers.
+- **Keyboard Navigation**: The application is designed to be fully accessible for PwD (People with Disabilities) using screen readers.
+
+### Keyboard Shortcuts
+- **ALT+U**: Navigate to the Upload Receipts section.
+
 
 ### User Interface
 - **Theme Support**: Includes both **Light Mode** and **Dark Mode** for user comfort.
