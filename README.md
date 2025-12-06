@@ -28,6 +28,24 @@ The primary goal of this project is to provide a user-friendly tool for employee
 ### User Interface
 - **Theme Support**: Includes both **Light Mode** and **Dark Mode** for user comfort.
 
+## Data Storage & Processing
+
+The application operates completely client-side for data persistence while leveraging cloud AI for processing.
+
+### Data Storage
+- **Local Storage**: All receipt data is persisted locally in the user's browser using `localStorage`. This ensures that your data remains on your device and persists across sessions without requiring a backend database.
+  
+
+### Data Processing
+- **AI Integration**: Receipt parsing is powered by **Google Gemini 2.0 Flash** Model.  
+
+  - When a file is uploaded, it is converted to base64 and sent to the Gemini API.
+  - The model extracts key details (Date, Time, Amount, Locations) and infers the trip type (e.g., "Home to Office") based on location context.
+- **Aggregation Logic**:
+  - The main application logic aggregates daily expenses into monthly views.
+  - It automatically calculates the total monthly spend against the **₹6500** allowance.
+  - Statuses (`Safe`, `Warning`, `OverBudget`) are computed in real-time based on the aggregated totals.
+
 ## Run Locally
 
 **Prerequisites:** Node.js
