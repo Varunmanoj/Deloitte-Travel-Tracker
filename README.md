@@ -1,5 +1,7 @@
 # Deloitte Travel Tracker
 
+![Deloitte Travel Tracker Banner](Banner%20Image.png)
+
 A smart expense tracker that analyzes Uber, Ola, Rapido, and Cityflo receipts to track monthly spending against a corporate allowance.
 
 ## Objective
