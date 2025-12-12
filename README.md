@@ -18,6 +18,8 @@ The primary goal of this project is to provide a user-friendly tool for employee
   - **Approaching Limit**: Warns the user when they are nearing the ₹6500 limit.
   - **Over Budget**: Alerts the user if they have exceeded the limit, helping prevent non-reimbursable spending.
 
+### Cross-Device Cloud Sync
+- **Seamless Synchronization**: Access your data from anywhere. Your trip details and expenses are automatically synced across multiple devices (Desktop, Mobile, Tablet) when you log in.
 ### Program Specifics
 - Tailored for the **Deloitte USI Local Transport Reimbursement** program.
 - Specifically allows tracking against the **₹6500 monthly allowance** provided for eligible persons with disabilities and women employees.
