@@ -3,9 +3,14 @@ import { FileUpload } from './components/FileUpload';
 import { DashboardStats } from './components/DashboardStats';
 import { HistoryTable } from './components/HistoryTable';
 import { AnalysisChart } from './components/AnalysisChart';
-import { ThemeToggle, Theme } from './components/ThemeToggle';
+import { SettingsModal, Theme } from './components/SettingsModal';
+import { AuthModal } from './components/AuthModal';
+import { UserProfileModal } from './components/UserProfileModal'; // Import new separate profile modal
 import { parseReceipt } from './services/geminiService';
-import { ReceiptData, MonthlyStat, MONTHLY_ALLOWANCE } from './types';
+import { ReceiptData, MonthlyStat, DEFAULT_ALLOWANCE } from './types';
+import { auth, db } from './services/firebase';
+import { onAuthStateChanged, signOut, User } from 'firebase/auth';
+import { collection, doc, setDoc, onSnapshot, query, deleteDoc } from 'firebase/firestore';
 
 // Placeholder data for initial visualization if empty
 const DEMO_DATA: ReceiptData[] = [];
@@ -56,6 +61,18 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
+  // Auth State
+  const [user, setUser] = useState<User | null>(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [loadingAuth, setLoadingAuth] = useState(true);
+  const [headerImgError, setHeaderImgError] = useState(false);
+
+  // User Profile & Settings State
+  const [displayName, setDisplayName] = useState<string>('');
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false); // New state for Profile Modal
+  const [monthlyAllowance, setMonthlyAllowance] = useState(DEFAULT_ALLOWANCE);
+
   // Theme State
   const [theme, setTheme] = useState<Theme>(() => {
     return (localStorage.getItem('theme') as Theme) || 'system';
@@ -72,6 +89,23 @@ function App() {
     return `${year}-${month}`;
   });
 
+  // Initialize Auth Listener
+  useEffect(() => {
+    if (!auth) {
+      setLoadingAuth(false);
+      return;
+    }
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setHeaderImgError(false); // Reset error when user changes
+      if (!currentUser) {
+        setDisplayName(''); // Reset profile data on logout
+      }
+      setLoadingAuth(false);
+    });
+    return unsubscribe;
+  }, []);
+
   // Keyboard Shortcut Listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -85,28 +119,68 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Load from local storage on mount (simple persistence)
+  // Data Loading: LocalStorage vs Firestore
   useEffect(() => {
-    // Try to load new key first
-    let saved = localStorage.getItem('deloitte-travel-invoices');
-    if (!saved) {
-      // Fallback to old key migration
-      saved = localStorage.getItem('uber-tracker-invoices');
-    }
-    
-    if (saved) {
-      try {
-        setInvoices(JSON.parse(saved));
-      } catch (e) {
-        console.error("Failed to load history");
+    if (loadingAuth) return;
+
+    if (user && db) {
+      // FIRESTORE MODE
+      // 1. Listen for Expenses (Real-time) - Stores receipts/expenses
+      const expensesQuery = query(collection(db, 'users', user.uid, 'expenses'));
+      const unsubExpenses = onSnapshot(expensesQuery, (snapshot) => {
+        const fetched = snapshot.docs.map(doc => doc.data() as ReceiptData);
+        setInvoices(fetched);
+      });
+
+      // 2. Listen for User Settings (Budget & Profile) (Real-time)
+      const userRef = doc(db, 'users', user.uid);
+      const unsubUser = onSnapshot(userRef, (snap) => {
+        const data = snap.data();
+        if (snap.exists() && data) {
+           if (data.monthlyAllowance !== undefined) setMonthlyAllowance(data.monthlyAllowance);
+           if (data.displayName !== undefined) setDisplayName(data.displayName);
+        } else if (!snap.exists()) {
+          // Initialize if new user document doesn't exist
+          setDoc(userRef, { monthlyAllowance: DEFAULT_ALLOWANCE }, { merge: true });
+        }
+      });
+
+      return () => {
+        unsubExpenses();
+        unsubUser();
+      };
+    } else {
+      // LOCALSTORAGE MODE (Guest)
+      let saved = localStorage.getItem('deloitte-travel-invoices');
+      if (!saved) saved = localStorage.getItem('uber-tracker-invoices'); // Legacy
+      
+      if (saved) {
+        try {
+          setInvoices(JSON.parse(saved));
+        } catch (e) {
+          console.error("Failed to load history");
+        }
+      }
+      
+      const savedAllowance = localStorage.getItem('user-monthly-allowance');
+      if (savedAllowance) {
+        setMonthlyAllowance(Number(savedAllowance));
       }
     }
-  }, []);
+  }, [user, loadingAuth]);
 
-  // Save to local storage on change
+  // Sync to LocalStorage (Only for Guest Mode)
   useEffect(() => {
-    localStorage.setItem('deloitte-travel-invoices', JSON.stringify(invoices));
-  }, [invoices]);
+    if (!user) {
+      localStorage.setItem('deloitte-travel-invoices', JSON.stringify(invoices));
+    }
+  }, [invoices, user]);
+
+  useEffect(() => {
+    if (!user) {
+      localStorage.setItem('user-monthly-allowance', monthlyAllowance.toString());
+    }
+  }, [monthlyAllowance, user]);
 
   // Handle Theme Changes
   useEffect(() => {
@@ -136,6 +210,21 @@ function App() {
     }
   }, [theme]);
 
+  // Settings Handlers
+  const handleUpdateAllowance = async (amount: number) => {
+    if (user && db) {
+      await setDoc(doc(db, 'users', user.uid), { monthlyAllowance: amount }, { merge: true });
+    } else {
+      setMonthlyAllowance(amount);
+    }
+  };
+
+  const handleUpdateProfile = async (name: string) => {
+    if (user && db) {
+      await setDoc(doc(db, 'users', user.uid), { displayName: name }, { merge: true });
+    }
+  };
+
   const handleUpload = async (files: File[]) => {
     setIsProcessing(true);
     setError(null);
@@ -159,7 +248,17 @@ function App() {
       });
       
       if (newInvoices.length > 0) {
-        setInvoices(prev => [...newInvoices, ...prev]);
+        if (user && db) {
+          // Save to Firestore 'expenses' collection
+          const promises = newInvoices.map(inv => 
+            setDoc(doc(db, 'users', user.uid, 'expenses', inv.id), inv)
+          );
+          await Promise.all(promises);
+        } else {
+          // Save to State (LocalStorage syncs via effect)
+          setInvoices(prev => [...newInvoices, ...prev]);
+        }
+        
         // Optional: Switch view to the month of the first uploaded receipt
         if (newInvoices[0].date) {
             setSelectedMonthKey(newInvoices[0].date.substring(0, 7));
@@ -181,8 +280,16 @@ function App() {
     }
   };
 
-  const handleDelete = (id: string) => {
-    setInvoices(prev => prev.filter(inv => inv.id !== id));
+  const handleDelete = async (id: string) => {
+    if (user && db) {
+      try {
+        await deleteDoc(doc(db, 'users', user.uid, 'expenses', id));
+      } catch (e) {
+        console.error("Error deleting doc:", e);
+      }
+    } else {
+      setInvoices(prev => prev.filter(inv => inv.id !== id));
+    }
   };
 
   // Aggregation Logic
@@ -199,25 +306,25 @@ function App() {
           totalSpent: 0,
           tripCount: 0,
           status: 'Safe',
-          remainingBudget: MONTHLY_ALLOWANCE
+          remainingBudget: monthlyAllowance
         };
       }
       
       groups[monthKey].totalSpent += inv.amount;
       groups[monthKey].tripCount += 1;
-      groups[monthKey].remainingBudget = Math.max(0, MONTHLY_ALLOWANCE - groups[monthKey].totalSpent);
+      groups[monthKey].remainingBudget = Math.max(0, monthlyAllowance - groups[monthKey].totalSpent);
       
       // Determine status
-      if (groups[monthKey].totalSpent > MONTHLY_ALLOWANCE) {
+      if (groups[monthKey].totalSpent > monthlyAllowance) {
         groups[monthKey].status = 'OverBudget';
-      } else if (groups[monthKey].totalSpent >= 5000) {
+      } else if (groups[monthKey].totalSpent >= (monthlyAllowance * 0.8)) {
         groups[monthKey].status = 'Warning';
       }
     });
 
     // Sort descending by month
     return Object.values(groups).sort((a, b) => b.month.localeCompare(a.month));
-  }, [invoices]);
+  }, [invoices, monthlyAllowance]);
 
   // Handle Month Navigation
   const navigateMonth = (direction: number) => {
@@ -242,7 +349,7 @@ function App() {
     totalSpent: 0,
     tripCount: 0,
     status: 'Safe',
-    remainingBudget: MONTHLY_ALLOWANCE
+    remainingBudget: monthlyAllowance
   } as MonthlyStat;
 
   // Format month name for display
@@ -256,7 +363,30 @@ function App() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 font-sans pb-12 transition-colors duration-200">
       <SkipLinks />
+      <AuthModal isOpen={authModalOpen} onClose={() => setAuthModalOpen(false)} />
       
+      {/* Settings Modal (Theme + Budget only) */}
+      <SettingsModal 
+        isOpen={isSettingsOpen} 
+        onClose={() => setIsSettingsOpen(false)} 
+        theme={theme}
+        onThemeChange={setTheme}
+        monthlyAllowance={monthlyAllowance}
+        onUpdateAllowance={handleUpdateAllowance}
+      />
+
+      {/* User Profile Modal (Edit Profile + Logout) */}
+      {user && (
+        <UserProfileModal 
+          isOpen={isProfileOpen} 
+          onClose={() => setIsProfileOpen(false)}
+          user={user}
+          currentName={displayName}
+          onUpdateProfile={handleUpdateProfile}
+          onLogout={() => signOut(auth)}
+        />
+      )}
+
       {/* Header */}
       <header role="banner" className="bg-white dark:bg-black border-b border-gray-200 dark:border-gray-800 sticky top-0 z-50 transition-colors duration-200">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -266,8 +396,53 @@ function App() {
             </div>
             <h1 className="text-xl font-bold tracking-tight">Travel Tracker</h1>
           </div>
-          <nav className="flex items-center space-x-6" aria-label="Main Navigation">
-            <ThemeToggle theme={theme} onThemeChange={setTheme} />
+          <nav className="flex items-center gap-3" aria-label="Main Navigation">
+            {user ? (
+              // Logged In: Show User Avatar/Name (Clickable)
+              <button 
+                onClick={() => setIsProfileOpen(true)}
+                className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors focus:outline-none focus:ring-2 focus:ring-[#86BC25] group"
+                aria-label="Manage Account"
+              >
+                {user.photoURL && !headerImgError ? (
+                  <img 
+                    src={user.photoURL} 
+                    alt=""
+                    className="w-8 h-8 rounded-full border border-gray-200 dark:border-gray-700"
+                    referrerPolicy="no-referrer"
+                    onError={() => setHeaderImgError(true)}
+                  />
+                ) : (
+                  <div className="w-8 h-8 bg-[#86BC25]/20 text-[#86BC25] rounded-full flex items-center justify-center font-bold text-sm">
+                    {(displayName || user.displayName || user.email || 'U').charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300 hidden sm:block group-hover:text-gray-900 dark:group-hover:text-white">
+                  {displayName || user.displayName || user.email?.split('@')[0]}
+                </span>
+              </button>
+            ) : (
+              // Logged Out: Show Login Button
+              <button
+                onClick={() => setAuthModalOpen(true)}
+                className="px-4 py-2 bg-[#86BC25] hover:bg-[#76a821] text-white font-bold text-sm rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#86BC25]"
+              >
+                Log In
+              </button>
+            )}
+
+            {/* Settings Icon (Always visible) */}
+            <button
+                onClick={() => setIsSettingsOpen(true)}
+                className="p-2 rounded-lg text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800 transition-colors focus:outline-none focus:ring-2 focus:ring-[#86BC25]"
+                aria-label="Open Settings"
+                title="Settings"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+            </button>
           </nav>
         </div>
       </header>
@@ -314,7 +489,10 @@ function App() {
             </div>
 
             <section aria-labelledby="overview-heading">
-              <DashboardStats currentMonthStats={selectedMonthStats} />
+              <DashboardStats 
+                currentMonthStats={selectedMonthStats} 
+                monthlyAllowance={monthlyAllowance}
+              />
             </section>
             
             <section className="mt-8" aria-label="Spend Analysis Trend Chart">
@@ -323,6 +501,7 @@ function App() {
                 selectedMonth={selectedMonthKey}
                 onMonthSelect={setSelectedMonthKey}
                 isDarkMode={isDarkMode}
+                monthlyAllowance={monthlyAllowance}
               />
             </section>
           </div>

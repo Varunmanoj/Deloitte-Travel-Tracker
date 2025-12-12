@@ -6,7 +6,6 @@ export interface ReceiptData {
   currency: string;
   pickupLocation: string;
   dropoffLocation: string;
-  tripType: string; // Inferred context e.g., "Commute", "Personal"
 }
 
 export interface MonthlyStat {
@@ -17,4 +16,5 @@ export interface MonthlyStat {
   remainingBudget: number;
 }
 
-export const MONTHLY_ALLOWANCE = 6500;
+// Default value if not set by user
+export const DEFAULT_ALLOWANCE = 6500;

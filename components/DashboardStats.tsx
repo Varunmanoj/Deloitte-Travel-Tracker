@@ -1,27 +1,28 @@
 import React from 'react';
-import { MonthlyStat, MONTHLY_ALLOWANCE } from '../types';
+import { MonthlyStat } from '../types';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 
 interface DashboardStatsProps {
   currentMonthStats: MonthlyStat | null;
+  monthlyAllowance: number;
 }
 
-export const DashboardStats: React.FC<DashboardStatsProps> = ({ currentMonthStats }) => {
+export const DashboardStats: React.FC<DashboardStatsProps> = ({ currentMonthStats, monthlyAllowance }) => {
   const spent = currentMonthStats?.totalSpent || 0;
-  const remaining = Math.max(0, MONTHLY_ALLOWANCE - spent);
+  const remaining = Math.max(0, monthlyAllowance - spent);
   
   // Visual percentage capped at 100% for the bar
-  const visualPercentage = Math.min(100, (spent / MONTHLY_ALLOWANCE) * 100);
+  const visualPercentage = Math.min(100, (spent / monthlyAllowance) * 100);
   // Actual percentage for display
-  const actualPercentage = (spent / MONTHLY_ALLOWANCE) * 100;
+  const actualPercentage = monthlyAllowance > 0 ? (spent / monthlyAllowance) * 100 : 0;
 
   let statusColor = '#86BC25'; // Deloitte Green
   let statusText = 'Within Limit';
   
-  if (spent > MONTHLY_ALLOWANCE) {
+  if (spent > monthlyAllowance) {
     statusColor = '#EF4444'; // Red
     statusText = 'Exceeded Limit';
-  } else if (spent >= 5000) {
+  } else if (spent >= (monthlyAllowance * 0.8)) {
     statusColor = '#F59E0B'; // Amber/Yellow
     statusText = 'Approaching Limit';
   }
@@ -47,11 +48,13 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({ currentMonthStat
       >
         <div className="flex justify-between items-start z-10 relative">
           <div>
-            <h2 className="text-gray-500 dark:text-gray-400 font-medium text-sm uppercase tracking-wider" aria-hidden="true">Monthly Allowance</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-gray-500 dark:text-gray-400 font-medium text-sm uppercase tracking-wider" aria-hidden="true">Monthly Allowance</h2>
+            </div>
             <div className="mt-2 flex items-baseline space-x-2">
               <span className="text-4xl font-bold text-gray-900 dark:text-white" aria-label={`Spent ${spent.toLocaleString()} rupees`}>₹{spent.toLocaleString()}</span>
-              <span className="text-gray-400 dark:text-gray-500 font-medium" aria-hidden="true">/ ₹{MONTHLY_ALLOWANCE.toLocaleString()}</span>
-              <span className="sr-only">out of {MONTHLY_ALLOWANCE.toLocaleString()} limit</span>
+              <span className="text-gray-400 dark:text-gray-500 font-medium" aria-hidden="true">/ ₹{monthlyAllowance.toLocaleString()}</span>
+              <span className="sr-only">out of {monthlyAllowance.toLocaleString()} limit</span>
             </div>
             <p className="mt-2 text-sm font-bold" style={{ color: statusColor }}>
               {statusText}

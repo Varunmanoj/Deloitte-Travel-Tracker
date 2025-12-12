@@ -35,14 +35,15 @@ The primary goal of this project is to provide a user-friendly tool for employee
 
 ## Data Storage & Processing
 
-The application operates completely client-side for data persistence while leveraging cloud AI for processing.
+The application leverages cloud AI for processing and online cloud storage for data persistence.
 
 ### Data Storage
-- **Local Storage**: All receipt data is persisted locally in the user's browser using `localStorage`. This ensures that your data remains on your device and persists across sessions without requiring a backend database.
+- **Firebase Cloud Storage**: Data is now securely stored online using Firebase. This enables real-time synchronization of user details and trip history across multiple devices and user agents.
+- **Authentication**: Secure Login and Sign-up flows have been implemented. Users can authenticate via **Email & Password** or **Sign in with Google** to store sensitive information securely online.
   
 
 ### Data Processing
-- **AI Integration**: Receipt parsing is powered by **Google Gemini 2.0 Flash** Model.  
+- **AI Integration**: Receipt parsing is powered by **Google Gemini 2.5 Flash** Model.  
 
   - When a file is uploaded, it is converted to base64 and sent to the Gemini API.
   - The model extracts key details (Date, Time, Amount, Locations) and infers the trip type (e.g., "Home to Office") based on location context.
