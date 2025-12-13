@@ -141,7 +141,7 @@ export const HistoryTable: React.FC<HistoryTableProps> = ({ invoices, onDelete }
                   <td className="px-6 py-4 text-right">
                     <button 
                       onClick={() => onDelete(inv.id)}
-                      className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400 transition-colors text-xs font-medium"
+                      className="text-gray-400 hover:text-red-500 dark:text-gray-400 dark:hover:text-red-400 transition-colors text-xs font-medium"
                       aria-label={`Remove receipt from ${inv.date} at ${inv.time}`}
                       title={`Remove receipt from ${inv.date} at ${inv.time}`}
                     >

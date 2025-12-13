@@ -119,8 +119,11 @@ export const AnalysisChart: React.FC<AnalysisChartProps> = ({ invoices, selected
                 borderRadius: '8px', 
                 border: 'none', 
                 boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-                backgroundColor: isDarkMode ? '#111827' : '#ffffff',
+                backgroundColor: isDarkMode ? '#1f2937' : '#ffffff', // Lighter background for tooltip in dark mode
                 color: isDarkMode ? '#f3f4f6' : '#111827'
+              }}
+              itemStyle={{
+                color: isDarkMode ? '#e5e7eb' : '#374151' // Explicitly set item color for high contrast
               }}
               labelFormatter={(label, payload) => {
                 if (payload && payload.length > 0) {
