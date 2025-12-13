@@ -220,19 +220,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                 <div>
                   <div className="flex justify-between items-center mb-1">
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Password</label>
-                    {authMode === 'login' && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                            setAuthMode('reset');
-                            setError(null);
-                            setSuccessMessage(null);
-                        }}
-                        className="text-xs text-[#86BC25] hover:underline font-medium focus:outline-none focus:text-[#76a821]"
-                      >
-                        Forgot Password?
-                      </button>
-                    )}
                   </div>
                   <input
                     type="password"
@@ -252,6 +239,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
               >
                 {getButtonText()}
               </button>
+
+              {/* Forgot Password moved after Submit button for correct tab order */}
+              {authMode === 'login' && (
+                <div className="text-right">
+                  <button
+                    type="button"
+                    onClick={() => {
+                        setAuthMode('reset');
+                        setError(null);
+                        setSuccessMessage(null);
+                    }}
+                    className="text-xs text-[#86BC25] hover:underline font-medium focus:outline-none focus:text-[#76a821]"
+                  >
+                    Forgot Password?
+                  </button>
+                </div>
+              )}
             </form>
 
             {authMode !== 'reset' && (

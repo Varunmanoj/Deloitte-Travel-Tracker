@@ -90,7 +90,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({ currentMonthStat
       >
         <h3 className="text-gray-500 dark:text-gray-400 text-sm font-medium mb-2 w-full text-left" aria-hidden="true">Utilization</h3>
         <div className="w-full h-32" aria-hidden="true">
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minWidth={0}>
             <PieChart>
               <Pie
                 data={data}

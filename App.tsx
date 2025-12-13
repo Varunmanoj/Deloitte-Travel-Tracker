@@ -5,8 +5,9 @@ import { HistoryTable } from './components/HistoryTable';
 import { AnalysisChart } from './components/AnalysisChart';
 import { SettingsModal, Theme } from './components/SettingsModal';
 import { AuthModal } from './components/AuthModal';
-import { UserProfileModal } from './components/UserProfileModal'; // Import new separate profile modal
-import { parseReceipt } from './services/geminiService';
+import { UserProfileModal } from './components/UserProfileModal'; 
+import { UploadResultModal } from './components/UploadResultModal'; // Import new modal
+import { parseReceipt, ReceiptError } from './services/geminiService';
 import { ReceiptData, MonthlyStat, DEFAULT_ALLOWANCE } from './types';
 import { auth, db } from './services/firebase';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
@@ -14,6 +15,20 @@ import { collection, doc, setDoc, onSnapshot, query, deleteDoc } from 'firebase/
 
 // Placeholder data for initial visualization if empty
 const DEMO_DATA: ReceiptData[] = [];
+
+// Error State for Generic/Critical errors (not upload results)
+interface ErrorState {
+    title: string;
+    details?: string[];
+    type: 'error' | 'warning';
+}
+
+// State interface for Upload Modal
+interface UploadResultState {
+    isOpen: boolean;
+    duplicates: { fileName: string; data: ReceiptData }[];
+    errors: string[];
+}
 
 // Skip Links Component for Accessibility
 const SkipLinks = () => {
@@ -37,7 +52,7 @@ const SkipLinks = () => {
         { href: "#main-content", label: "Skip to main content" },
         { href: "#monthly-allowance-card", label: "Skip to monthly allowance" },
         { href: "#utilization-card", label: "Skip to utilization" },
-        { href: "#analysis-trend-chart", label: "Skip to spend analysis trend" },
+        { href: "#analysis-daily-chart", label: "Skip to daily spend chart" },
         { href: "#upload-section", label: "Skip to file upload (Alt + U)" },
         { href: "#trips-section", label: "Skip to trips in month" },
       ].map((link, index) => (
@@ -58,7 +73,12 @@ const SkipLinks = () => {
 function App() {
   const [invoices, setInvoices] = useState<ReceiptData[]>(DEMO_DATA);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  
+  // State for upload results modal
+  const [uploadResult, setUploadResult] = useState<UploadResultState>({ isOpen: false, duplicates: [], errors: [] });
+  // Critical system errors
+  const [systemError, setSystemError] = useState<ErrorState | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Auth State
@@ -70,7 +90,7 @@ function App() {
   // User Profile & Settings State
   const [displayName, setDisplayName] = useState<string>('');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isProfileOpen, setIsProfileOpen] = useState(false); // New state for Profile Modal
+  const [isProfileOpen, setIsProfileOpen] = useState(false); 
   const [monthlyAllowance, setMonthlyAllowance] = useState(DEFAULT_ALLOWANCE);
 
   // Theme State
@@ -78,7 +98,7 @@ function App() {
     return (localStorage.getItem('theme') as Theme) || 'system';
   });
 
-  // Derived state for dark mode specifically (to pass to charts etc)
+  // Derived state for dark mode specifically
   const [isDarkMode, setIsDarkMode] = useState(false);
   
   // State to track which month is currently being viewed (YYYY-MM)
@@ -125,14 +145,12 @@ function App() {
 
     if (user && db) {
       // FIRESTORE MODE
-      // 1. Listen for Expenses (Real-time) - Stores receipts/expenses
       const expensesQuery = query(collection(db, 'users', user.uid, 'expenses'));
       const unsubExpenses = onSnapshot(expensesQuery, (snapshot) => {
         const fetched = snapshot.docs.map(doc => doc.data() as ReceiptData);
         setInvoices(fetched);
       });
 
-      // 2. Listen for User Settings (Budget & Profile) (Real-time)
       const userRef = doc(db, 'users', user.uid);
       const unsubUser = onSnapshot(userRef, (snap) => {
         const data = snap.data();
@@ -140,7 +158,6 @@ function App() {
            if (data.monthlyAllowance !== undefined) setMonthlyAllowance(data.monthlyAllowance);
            if (data.displayName !== undefined) setDisplayName(data.displayName);
         } else if (!snap.exists()) {
-          // Initialize if new user document doesn't exist
           setDoc(userRef, { monthlyAllowance: DEFAULT_ALLOWANCE }, { merge: true });
         }
       });
@@ -201,7 +218,6 @@ function App() {
     applyTheme(theme);
     localStorage.setItem('theme', theme);
 
-    // Listen for system changes if mode is system
     if (theme === 'system') {
       const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
       const handleChange = () => applyTheme('system');
@@ -225,56 +241,97 @@ function App() {
     }
   };
 
+  // Helper for duplicate detection
+  const normalizeStr = (str: string) => str ? str.toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+
   const handleUpload = async (files: File[]) => {
     setIsProcessing(true);
-    setError(null);
+    setSystemError(null);
+    setUploadResult({ isOpen: false, duplicates: [], errors: [] }); // Reset modal state
     
-    let successCount = 0;
-    const errors: string[] = [];
-    const newInvoices: ReceiptData[] = [];
-
+    const duplicateList: { fileName: string; data: ReceiptData }[] = [];
+    const errorList: string[] = [];
+    const uniqueNewInvoices: ReceiptData[] = [];
+    
     try {
       // Process files concurrently
       const results = await Promise.allSettled(files.map(file => parseReceipt(file)));
       
       results.forEach((result, index) => {
+        const fileName = files[index].name;
+
         if (result.status === 'fulfilled') {
-          newInvoices.push(result.value);
-          successCount++;
+          const newInv = result.value;
+          
+          // Robust duplicate detection logic
+          const isDuplicate = (existing: ReceiptData) => {
+             // 1. Check Date & Time (Exact match expected)
+            if (existing.date !== newInv.date) return false;
+            if (existing.time !== newInv.time) return false;
+            
+            // 2. Check Amount (Allow tiny float difference)
+            if (Math.abs(existing.amount - newInv.amount) > 0.01) return false;
+            
+            // 3. Check Locations (Normalized to ignore case, punctuation, spaces)
+            const p1 = normalizeStr(existing.pickupLocation);
+            const p2 = normalizeStr(newInv.pickupLocation);
+            const d1 = normalizeStr(existing.dropoffLocation);
+            const d2 = normalizeStr(newInv.dropoffLocation);
+            
+            if (p1 !== p2) return false;
+            if (d1 !== d2) return false;
+            
+            return true;
+          };
+
+          // Check against existing database history OR duplicates within the current upload batch
+          if (invoices.some(isDuplicate) || uniqueNewInvoices.some(isDuplicate)) {
+             duplicateList.push({ fileName, data: newInv });
+          } else {
+             uniqueNewInvoices.push(newInv);
+          }
+
         } else {
-          console.error(`Failed to parse file ${files[index].name}:`, result.reason);
-          errors.push(files[index].name);
+          const reason = result.reason instanceof ReceiptError 
+            ? result.reason.message 
+            : (result.reason?.message || "Unknown error processing receipt");
+          
+          console.error(`Failed to parse file ${fileName}:`, result.reason);
+          errorList.push(`${fileName}: ${reason}`);
         }
       });
-      
-      if (newInvoices.length > 0) {
+
+      // Save only unique invoices
+      if (uniqueNewInvoices.length > 0) {
         if (user && db) {
           // Save to Firestore 'expenses' collection
-          const promises = newInvoices.map(inv => 
+          const promises = uniqueNewInvoices.map(inv => 
             setDoc(doc(db, 'users', user.uid, 'expenses', inv.id), inv)
           );
           await Promise.all(promises);
         } else {
           // Save to State (LocalStorage syncs via effect)
-          setInvoices(prev => [...newInvoices, ...prev]);
+          setInvoices(prev => [...uniqueNewInvoices, ...prev]);
         }
         
         // Optional: Switch view to the month of the first uploaded receipt
-        if (newInvoices[0].date) {
-            setSelectedMonthKey(newInvoices[0].date.substring(0, 7));
+        if (uniqueNewInvoices[0].date) {
+            setSelectedMonthKey(uniqueNewInvoices[0].date.substring(0, 7));
         }
       }
 
-      if (errors.length > 0) {
-        if (successCount === 0) {
-           setError(`Failed to process all ${files.length} receipts. Please ensure they are valid receipts.`);
-        } else {
-           setError(`Processed ${successCount} receipts. Failed: ${errors.length} (${errors.join(', ')}).`);
-        }
+      // If there are duplicates or parsing errors, open the modal
+      if (duplicateList.length > 0 || errorList.length > 0) {
+         setUploadResult({
+             isOpen: true,
+             duplicates: duplicateList,
+             errors: errorList
+         });
       }
-    } catch (err) {
-      setError("An unexpected error occurred during processing.");
+
+    } catch (err: any) {
       console.error(err);
+      setSystemError({ title: "An unexpected critical error occurred during upload.", details: [err.message], type: 'error' });
     } finally {
       setIsProcessing(false);
     }
@@ -336,6 +393,12 @@ function App() {
     setSelectedMonthKey(`${newYear}-${newMonth}`);
   };
 
+  // Helper to safely get date object from key YYYY-MM
+  const getMonthDateObj = (key: string) => {
+    const [y, m] = key.split('-').map(Number);
+    return new Date(y, m - 1, 15);
+  };
+
   // Helper to calculate relative month name
   const getRelativeMonthName = (offset: number) => {
     const [year, month] = selectedMonthKey.split('-').map(Number);
@@ -352,8 +415,8 @@ function App() {
     remainingBudget: monthlyAllowance
   } as MonthlyStat;
 
-  // Format month name for display
-  const monthDisplay = new Date(selectedMonthKey + '-02').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  // Format month name for display using robust date construction
+  const monthDisplay = getMonthDateObj(selectedMonthKey).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
   // Filter history table for the selected month
   const selectedMonthInvoices = useMemo(() => {
@@ -365,6 +428,14 @@ function App() {
       <SkipLinks />
       <AuthModal isOpen={authModalOpen} onClose={() => setAuthModalOpen(false)} />
       
+      {/* Upload Result Modal (Handles Duplicate/Error feedback) */}
+      <UploadResultModal 
+        isOpen={uploadResult.isOpen}
+        onClose={() => setUploadResult(prev => ({ ...prev, isOpen: false }))}
+        duplicates={uploadResult.duplicates}
+        errors={uploadResult.errors}
+      />
+
       {/* Settings Modal (Theme + Budget only) */}
       <SettingsModal 
         isOpen={isSettingsOpen} 
@@ -439,7 +510,7 @@ function App() {
                 title="Settings"
             >
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.212 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
             </button>
@@ -474,7 +545,7 @@ function App() {
                   </svg>
                 </button>
                 <div className="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 min-w-[100px] text-center select-none border-x border-gray-100 dark:border-gray-800 mx-1" aria-hidden="true">
-                  {new Date(selectedMonthKey + '-02').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                  {getMonthDateObj(selectedMonthKey).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
                 </div>
                 <button 
                   onClick={() => navigateMonth(1)}
@@ -497,11 +568,10 @@ function App() {
             
             <section className="mt-8" aria-label="Spend Analysis Trend Chart">
               <AnalysisChart 
-                stats={monthlyStats} 
+                invoices={invoices}
                 selectedMonth={selectedMonthKey}
                 onMonthSelect={setSelectedMonthKey}
                 isDarkMode={isDarkMode}
-                monthlyAllowance={monthlyAllowance}
               />
             </section>
           </div>
@@ -516,12 +586,32 @@ function App() {
             >
               <h2 id="upload-heading" className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">Add Receipts</h2>
               <FileUpload ref={fileInputRef} onUpload={handleUpload} isProcessing={isProcessing} />
-              {error && (
-                <div role="alert" className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm rounded-lg border border-red-100 dark:border-red-900/50 flex items-start">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                  </svg>
-                  <span>{error}</span>
+              
+              {/* Critical System Error Fallback (Not Upload Duplicates) */}
+              {systemError && (
+                <div role="alert" className={`mt-4 p-4 text-sm rounded-lg border relative shadow-sm bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200 border-red-100 dark:border-red-900/50`}>
+                  <button 
+                      onClick={() => setSystemError(null)}
+                      className={`absolute top-3 right-3 p-1 rounded-full transition-colors focus:outline-none focus:ring-2 hover:bg-red-100 dark:hover:bg-red-900/40 focus:ring-red-500`}
+                      aria-label="Dismiss message"
+                  >
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                          <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                      </svg>
+                  </button>
+                  <div className="font-semibold flex items-center gap-2 mb-1 pr-6">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 shrink-0 text-red-500" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                      {systemError.title}
+                  </div>
+                  {systemError.details && systemError.details.length > 0 && (
+                      <ul className="mt-2 list-disc list-inside space-y-1 text-xs pl-1 break-words text-red-700 dark:text-red-300">
+                          {systemError.details.map((detail, idx) => (
+                              <li key={idx} className="">{detail}</li>
+                          ))}
+                      </ul>
+                  )}
                 </div>
               )}
             </section>
@@ -532,7 +622,7 @@ function App() {
               aria-live="polite" 
               className="bg-green-50 dark:bg-green-900/10 p-5 rounded-xl border border-green-100 dark:border-green-900/30 transition-colors"
             >
-              <h3 className="text-gray-900 dark:text-gray-100 font-medium mb-2">Analysis for {new Date(selectedMonthKey + '-02').toLocaleDateString('en-US', { month: 'long' })}</h3>
+              <h3 className="text-gray-900 dark:text-gray-100 font-medium mb-2">Analysis for {getMonthDateObj(selectedMonthKey).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h3>
               <p className="text-gray-700 dark:text-gray-400 text-sm leading-relaxed">
                 Total spent: <span className="font-bold">₹{selectedMonthStats.totalSpent.toLocaleString()}</span>. 
                 <br/>

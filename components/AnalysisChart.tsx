@@ -1,124 +1,151 @@
-import React from 'react';
-import { MonthlyStat } from '../types';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, CartesianGrid, Cell } from 'recharts';
+import React, { useMemo } from 'react';
+import { ReceiptData } from '../types';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from 'recharts';
 
 interface AnalysisChartProps {
-  stats: MonthlyStat[];
+  invoices: ReceiptData[];
   selectedMonth: string;
   onMonthSelect: (month: string) => void;
   isDarkMode?: boolean;
-  monthlyAllowance: number;
 }
 
-export const AnalysisChart: React.FC<AnalysisChartProps> = ({ stats, selectedMonth, onMonthSelect, isDarkMode = false, monthlyAllowance }) => {
-  const chartData = stats.map(s => ({
-    name: s.month,
-    spent: s.totalSpent,
-    allowance: monthlyAllowance,
-    // Helper for tooltip
-    monthName: new Date(s.month + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
-    fullMonthName: new Date(s.month + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-  })).reverse(); // Show oldest to newest
-
-  const selectedIndex = chartData.findIndex(d => d.name === selectedMonth);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (chartData.length === 0) return;
+export const AnalysisChart: React.FC<AnalysisChartProps> = ({ invoices, selectedMonth, onMonthSelect, isDarkMode = false }) => {
+  
+  // Aggregate daily spend for the selected month
+  const dailyData = useMemo(() => {
+    const data: Record<string, number> = {};
     
-    // Find current index, default to last if not found (though selectedMonth should always be valid)
-    const currentIndex = selectedIndex === -1 ? chartData.length - 1 : selectedIndex;
+    invoices.forEach(inv => {
+      if (inv.date.startsWith(selectedMonth)) {
+        const day = inv.date; // YYYY-MM-DD
+        data[day] = (data[day] || 0) + inv.amount;
+      }
+    });
 
+    return Object.entries(data)
+      .map(([date, amount]) => {
+        // Parse date reliably in local time to avoid timezone shifts
+        // date string is YYYY-MM-DD
+        const [y, m, d] = date.split('-').map(Number);
+        const dateObj = new Date(y, m - 1, d); // Local time construction
+        
+        return {
+          fullDate: date,
+          day: dateObj.getDate().toString(), // "5", "12"
+          displayDate: dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          amount: amount
+        };
+      })
+      .sort((a, b) => a.fullDate.localeCompare(b.fullDate));
+  }, [invoices, selectedMonth]);
+
+  // Handle keyboard navigation to switch months
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    const [year, month] = selectedMonth.split('-').map(Number);
+    
     if (e.key === 'ArrowRight') {
       e.preventDefault();
-      if (currentIndex < chartData.length - 1) {
-        onMonthSelect(chartData[currentIndex + 1].name);
-      }
+      // Next Month (Use day 15 to be safe)
+      const d = new Date(year, month - 1 + 1, 15);
+      const nextMonthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      onMonthSelect(nextMonthStr);
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault();
-      if (currentIndex > 0) {
-        onMonthSelect(chartData[currentIndex - 1].name);
-      }
-    } else if (e.key === 'Home') {
-      e.preventDefault();
-      onMonthSelect(chartData[0].name);
-    } else if (e.key === 'End') {
-      e.preventDefault();
-      onMonthSelect(chartData[chartData.length - 1].name);
+      // Prev Month (Use day 15 to be safe)
+      const d = new Date(year, month - 1 - 1, 15);
+      const prevMonthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      onMonthSelect(prevMonthStr);
     }
   };
 
+  const [displayYear, displayMonth] = selectedMonth.split('-').map(Number);
+  const monthName = new Date(displayYear, displayMonth - 1, 15).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  if (dailyData.length === 0) {
+    return (
+      <div 
+        className="bg-white dark:bg-black p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-800 h-96 flex flex-col items-center justify-center text-gray-400 dark:text-gray-600 focus:outline-none focus:ring-2 focus:ring-[#86BC25]"
+        tabIndex={0}
+        onKeyDown={handleKeyDown}
+        aria-label={`Daily Spend Chart for ${monthName}. No data available. Use Left and Right arrow keys to change month.`}
+      >
+         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12 mb-2 opacity-50">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" />
+         </svg>
+         <p>No trips recorded for {monthName}</p>
+         <p className="text-xs mt-2 opacity-75">Use arrow keys to change month</p>
+      </div>
+    );
+  }
+
   return (
     <div 
-      id="analysis-trend-chart"
-      className="bg-white dark:bg-black p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-800 h-96 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-[#86BC25] ring-offset-2 ring-offset-white dark:ring-offset-black"
+      id="analysis-daily-chart"
+      className="bg-white dark:bg-black p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-800 h-96 flex flex-col transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-[#86BC25] ring-offset-2 ring-offset-white dark:ring-offset-black"
       tabIndex={0}
       role="application"
-      aria-label="Spend analysis chart. Use Left and Right arrow keys to navigate between months. Values will be updated in the analysis section below."
+      aria-label={`Daily Spend Chart for ${monthName}. Use Left and Right arrow keys to navigate between months.`}
       onKeyDown={handleKeyDown}
     >
-      <div className="flex justify-between items-center mb-6">
-        <h3 className="font-semibold text-gray-800 dark:text-gray-200">Spend Analysis Trend</h3>
-        <span className="text-xs text-gray-400 dark:text-gray-500 hidden sm:inline-block" aria-hidden="true">Use &larr; &rarr; to navigate</span>
+      <div className="flex justify-between items-center mb-6 shrink-0">
+        <h3 className="font-semibold text-gray-800 dark:text-gray-200">Daily Spend Breakdown</h3>
+        <span className="text-xs text-gray-400 dark:text-gray-500 hidden sm:inline-block" aria-hidden="true">
+          {monthName}
+        </span>
       </div>
       
-      <ResponsiveContainer width="100%" height="85%">
-        <BarChart 
-          data={chartData} 
-          margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-          onClick={(data) => {
-            if (data && data.activePayload && data.activePayload.length > 0) {
-              onMonthSelect(data.activePayload[0].payload.name);
-            }
-          }}
-          accessibilityLayer
-        >
-          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? '#374151' : '#f0f0f0'} />
-          <XAxis 
-            dataKey="name" 
-            axisLine={false} 
-            tickLine={false} 
-            tick={{ fontSize: 12, fill: isDarkMode ? '#9CA3AF' : '#9CA3AF' }} 
-            dy={10}
-            tickFormatter={(value) => {
-              // Format YYYY-MM to Short Month (e.g., Oct)
-              const date = new Date(value + '-02'); // Avoid timezone day shift
-              return date.toLocaleDateString('en-US', { month: 'short' });
-            }}
-          />
-          <YAxis 
-            hide 
-          />
-          <Tooltip 
-            cursor={{ fill: isDarkMode ? '#111827' : '#F9FAFB' }}
-            contentStyle={{ 
-              borderRadius: '8px', 
-              border: 'none', 
-              boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-              backgroundColor: isDarkMode ? '#111827' : '#ffffff',
-              color: isDarkMode ? '#f3f4f6' : '#111827'
-            }}
-            labelFormatter={(label) => new Date(label + '-02').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-            formatter={(value: number) => [`₹${value.toLocaleString()}`, 'Spent']}
-          />
-          <ReferenceLine y={monthlyAllowance} stroke="#EF4444" strokeDasharray="3 3" label={{ position: 'right', value: 'Limit', fill: '#EF4444', fontSize: 10 }} />
-          <Bar 
-            dataKey="spent" 
-            radius={[4, 4, 0, 0]} 
-            barSize={40}
-            cursor="pointer"
-            isAnimationActive={false} // Disable animation for better performance/responsiveness during keyboard nav
+      <div className="flex-1 w-full min-h-0">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+          <BarChart 
+            data={dailyData} 
+            margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
+            accessibilityLayer
           >
-            {chartData.map((entry, index) => (
-              <Cell 
-                key={`cell-${index}`} 
-                fill={entry.name === selectedMonth ? '#86BC25' : (isDarkMode ? '#4d7c0f' : '#bef264')} 
-                role="graphics-symbol"
-                aria-label={`${entry.fullMonthName}: ₹${entry.spent.toLocaleString()} spent. ${entry.spent > monthlyAllowance ? 'Over limit.' : 'Within limit.'}`}
-              />
-            ))}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? '#374151' : '#f0f0f0'} />
+            <XAxis 
+              dataKey="day" 
+              axisLine={false} 
+              tickLine={false} 
+              tick={{ fontSize: 12, fill: isDarkMode ? '#9CA3AF' : '#6B7280' }} 
+              dy={10}
+              interval={0} // Try to show all days if they fit, or let recharts handle it
+            />
+            <YAxis 
+              hide 
+            />
+            <Tooltip 
+              cursor={{ fill: isDarkMode ? '#111827' : '#F9FAFB' }}
+              contentStyle={{ 
+                borderRadius: '8px', 
+                border: 'none', 
+                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                backgroundColor: isDarkMode ? '#111827' : '#ffffff',
+                color: isDarkMode ? '#f3f4f6' : '#111827'
+              }}
+              labelFormatter={(label, payload) => {
+                if (payload && payload.length > 0) {
+                  return payload[0].payload.displayDate;
+                }
+                return label;
+              }}
+              formatter={(value: number) => [`₹${value.toLocaleString()}`, 'Spent']}
+            />
+            <Bar 
+              dataKey="amount" 
+              radius={[4, 4, 0, 0]} 
+              barSize={20}
+              isAnimationActive={true}
+            >
+              {dailyData.map((entry, index) => (
+                <Cell 
+                  key={`cell-${index}`} 
+                  fill={isDarkMode ? '#4d7c0f' : '#86BC25'} 
+                />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 };
